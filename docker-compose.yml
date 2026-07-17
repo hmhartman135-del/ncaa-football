@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: cfb
+      POSTGRES_PASSWORD: cfb
+      POSTGRES_DB: ncaa_football
+    ports:
+      - "5436:5432"
+    volumes:
+      - cfb_postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6383:6379"
+    volumes:
+      - cfb_redis_data:/data
+
+volumes:
+  cfb_postgres_data:
+  cfb_redis_data:
