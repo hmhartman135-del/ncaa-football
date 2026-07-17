@@ -128,6 +128,41 @@ async def get_recruiting_rankings(db: AsyncSession, class_year: int | None = Non
     return {"class_year": class_year, "conference": conference, "rankings": rankings}
 
 
+async def save_247_recruits(db: AsyncSession, class_year: int, rows: list[dict]) -> int:
+    """Replace the stored 247Sports player-ranking snapshot for a class year.
+    `rows` are dicts matching the Recruit columns (name/position/stars/rating/
+    national_rank/position_rank/state_rank/city/state_province/committed_to/
+    committed), as pulled directly off a 247Sports.com recruit-rankings page
+    the user linked. Only replaces rows previously tagged source='247sports'
+    for this class year — leaves any CFBD-sourced rows for the same class
+    year untouched."""
+    await db.execute(
+        delete(Recruit).where(Recruit.class_year == class_year, Recruit.source == "247sports")
+    )
+    fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    for row in rows:
+        db.add(Recruit(
+            class_year=class_year,
+            name=row["name"],
+            position=row.get("position"),
+            stars=row.get("stars"),
+            rating=row.get("rating"),
+            national_rank=row.get("national_rank"),
+            position_rank=row.get("position_rank"),
+            state_rank=row.get("state_rank"),
+            height=row.get("height"),
+            weight=row.get("weight"),
+            city=row.get("city"),
+            state_province=row.get("state_province"),
+            committed_to=row.get("committed_to"),
+            committed=row.get("committed", False),
+            source="247sports",
+            fetched_at=fetched_at,
+        ))
+    await db.commit()
+    return len(rows)
+
+
 async def save_247_team_rankings(db: AsyncSession, class_year: int, rows: list[dict]) -> int:
     """Replace the stored 247Sports team-ranking snapshot for a class year.
     `rows` are dicts with rank/school/commits/avg_rating/points, as pulled
