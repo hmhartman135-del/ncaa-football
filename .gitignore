@@ -6,3 +6,4 @@ node_modules/
 .next/
 npm-debug.log*
 .DS_Store
+*.tsbuildinfo
