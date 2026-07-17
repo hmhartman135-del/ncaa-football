@@ -241,7 +241,7 @@ function TeamRankingsTab({ season }: { season: number }) {
 
   const { data, isLoading } = useQuery({
     queryKey: ["team-rankings", metric, conference, season],
-    queryFn: () => getTeamStatRankings({ metric, season, conference: conference || undefined }),
+    queryFn: () => getTeamStatRankings({ metric, season, ...(conference ? { conference } : {}) }),
   });
 
   return (
