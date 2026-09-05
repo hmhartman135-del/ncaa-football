@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
 from .config import settings
-from .routers import teams, standings, players, analytics, scouting, roster, recruiting, transfer, draft, games, rankings
+from .routers import teams, standings, players, analytics, scouting, roster, recruiting, transfer, draft, games, rankings, sync
 
 SEASON = 2026  # Most recent/current college football season (2026 offseason -> in-season as year progresses)
 RECRUITING_CLASS = 2026  # signing class CFBD actually has data for right now (2027 class hasn't started committing in bulk)
@@ -50,6 +50,7 @@ async def _auto_ingest():
 async def lifespan(app: FastAPI):
     await init_db()
     await _auto_ingest()
+    await sync.maybe_auto_sync()
     yield
 
 
@@ -74,6 +75,7 @@ app.include_router(transfer.router)
 app.include_router(draft.router)
 app.include_router(games.router)
 app.include_router(rankings.router)
+app.include_router(sync.router)
 
 
 @app.get("/health")

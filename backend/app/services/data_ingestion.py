@@ -21,6 +21,20 @@ def _g(d: dict, *keys, default=None):
     return default
 
 
+async def _upsert(db: AsyncSession, model, match: dict, values: dict):
+    """Update the row matching `match` in place if one exists, else insert a
+    new one — every ingest function below is safe to re-run (a real sync,
+    not just a one-time seed) because of this. Without it, re-running against
+    an already-populated table would duplicate every row."""
+    result = await db.execute(select(model).filter_by(**match))
+    row = result.scalar_one_or_none()
+    if row:
+        for k, v in values.items():
+            setattr(row, k, v)
+    else:
+        db.add(model(**match, **values))
+
+
 async def ingest_teams(db: AsyncSession, year: int) -> int:
     teams = await cfbd.teams(year)
     records = {r["team"]: r for r in await cfbd.team_records(year) if r.get("team")}
@@ -33,9 +47,8 @@ async def ingest_teams(db: AsyncSession, year: int) -> int:
         total = rec.get("total", {}) if isinstance(rec, dict) else {}
         conf_games = rec.get("conferenceGames", {}) if isinstance(rec, dict) else {}
         logos = _g(t, "logos", default=[])
-        db.add(Team(
+        await _upsert(db, Team, {"school": school, "season": year}, dict(
             cfbd_id=_g(t, "id"),
-            school=school,
             mascot=_g(t, "mascot"),
             conference=_g(t, "conference"),
             division=_g(t, "division"),
@@ -47,7 +60,6 @@ async def ingest_teams(db: AsyncSession, year: int) -> int:
             losses=total.get("losses"),
             conference_wins=conf_games.get("wins"),
             conference_losses=conf_games.get("losses"),
-            season=year,
         ))
         count += 1
     await db.commit()
@@ -59,6 +71,9 @@ async def ingest_games(db: AsyncSession, year: int) -> int:
     games = await cfbd.games(year)
     count = 0
     for g in games:
+        cfbd_id = _g(g, "id")
+        if cfbd_id is None:
+            continue
         start_raw = _g(g, "startDate")
         start_date = None
         if start_raw:
@@ -66,8 +81,7 @@ async def ingest_games(db: AsyncSession, year: int) -> int:
                 start_date = datetime.fromisoformat(start_raw.replace("Z", "+00:00")).replace(tzinfo=None)
             except ValueError:
                 pass
-        db.add(Game(
-            cfbd_id=_g(g, "id"),
+        await _upsert(db, Game, {"cfbd_id": cfbd_id}, dict(
             season=year,
             week=_g(g, "week"),
             season_type=_g(g, "seasonType"),
@@ -96,12 +110,10 @@ async def ingest_draft_picks(db: AsyncSession, year: int) -> int:
         name = _g(p, "name")
         if not name:
             continue
-        db.add(NflDraftPick(
+        await _upsert(db, NflDraftPick, {"name": name, "draft_year": year}, dict(
             cfbd_athlete_id=_g(p, "collegeAthleteId"),
-            name=name,
             college_team=_g(p, "collegeTeam"),
             position=_g(p, "position"),
-            draft_year=year,
             round=_g(p, "round"),
             pick=_g(p, "pick"),
             nfl_team=_g(p, "nflTeam"),
@@ -131,9 +143,8 @@ async def ingest_rosters(db: AsyncSession, year: int) -> tuple[int, int]:
         if not name:
             continue
         year_in_school = _g(p, "year", "yearIn", "class")
-        db.add(Player(
+        await _upsert(db, Player, {"name": name, "season": resolved_year}, dict(
             cfbd_id=_g(p, "id"),
-            name=name,
             position=_g(p, "position"),
             team=_g(p, "team"),
             jersey=_g(p, "jersey"),
@@ -142,7 +153,6 @@ async def ingest_rosters(db: AsyncSession, year: int) -> tuple[int, int]:
             weight=_g(p, "weight"),
             home_city=_g(p, "homeCity", "home_city"),
             home_state=_g(p, "homeState", "home_state"),
-            season=resolved_year,
             draft_eligible=str(year_in_school) in ("3", "4", "5", "JR", "SR", "GR"),
         ))
         count += 1
@@ -205,9 +215,7 @@ async def ingest_season_stats(db: AsyncSession, year: int) -> int:
         ppa_row = ppa_by_name.get(player_name, {})
         avg_ppa = (ppa_row.get("averagePPA") or {}).get("all")
         total_ppa = (ppa_row.get("totalPPA") or {}).get("all")
-        db.add(PlayerSeasonStats(
-            player_id=player.id,
-            season=year,
+        await _upsert(db, PlayerSeasonStats, {"player_id": player.id, "season": year}, dict(
             ppa_avg=avg_ppa,
             ppa_total=total_ppa,
             **stats,
@@ -263,11 +271,9 @@ async def ingest_recruiting(db: AsyncSession, class_year: int) -> int:
     count = 0
     for p in parsed:
         committed_to = p["committed_to"]
-        db.add(Recruit(
+        await _upsert(db, Recruit, {"name": p["name"], "class_year": class_year}, dict(
             cfbd_id=p["cfbd_id"],
-            name=p["name"],
             position=p["position"],
-            class_year=class_year,
             stars=p["stars"],
             rating=p["rating"] or None,
             national_rank=p["national_rank"],
@@ -330,13 +336,11 @@ async def ingest_transfer_portal(db: AsyncSession, year: int) -> int:
             except ValueError:
                 pass
 
-        db.add(TransferPortalEntry(
+        await _upsert(db, TransferPortalEntry, {"player_name": name, "season": year}, dict(
             cfbd_id=_g(e, "id"),
-            player_name=name,
             position=_g(e, "position"),
             from_school=origin,
             to_school=destination,
-            season=year,
             year_in_school=_classify_class_year(linked.year if linked else None),
             eligibility_status=_g(e, "eligibility"),
             stars=_g(e, "stars"),
