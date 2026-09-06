@@ -19,6 +19,8 @@ from ..services.data_ingestion import (
     ingest_teams, ingest_games, ingest_rosters, ingest_season_stats,
     ingest_recruiting, ingest_transfer_portal,
 )
+from ..services.rankings_service import generate_ai_top25
+from ..services.matchup_service import refresh_stale_predictions
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -52,6 +54,13 @@ async def _sync_all() -> None:
                 counts["season_stats"] = await ingest_season_stats(db, roster_year)
                 counts["recruiting"] = await ingest_recruiting(db, RECRUITING_CLASS)
                 counts["transfer_portal"] = await ingest_transfer_portal(db, PORTAL_CYCLE)
+
+                # Real data is now current for this cycle — regenerate the AI
+                # aspects that depend on it instead of leaving them frozen at
+                # whatever was true (often 0-0) when they were last generated.
+                ai_top25 = await generate_ai_top25(db, SEASON)
+                counts["ai_top25"] = 1 if ai_top25 else 0
+                counts["predictions_refreshed"] = await refresh_stale_predictions(db, SEASON)
 
             _state["status"] = "idle"
             _state["counts"] = counts

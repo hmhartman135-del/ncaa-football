@@ -86,12 +86,13 @@ async def ingest_games(db: AsyncSession, year: int) -> int:
                 start_date = datetime.fromisoformat(start_raw.replace("Z", "+00:00")).replace(tzinfo=None)
             except ValueError:
                 pass
-        await _upsert(db, Game, {"cfbd_id": cfbd_id}, dict(
+        completed = bool(_g(g, "completed", default=False))
+        values = dict(
             season=year,
             week=_g(g, "week"),
             season_type=_g(g, "seasonType"),
             start_date=start_date,
-            completed=bool(_g(g, "completed", default=False)),
+            completed=completed,
             neutral_site=bool(_g(g, "neutralSite", default=False)),
             venue=_g(g, "venue"),
             notes=_g(g, "notes"),
@@ -101,7 +102,13 @@ async def ingest_games(db: AsyncSession, year: int) -> int:
             away_team=_g(g, "awayTeam"),
             away_conference=_g(g, "awayConference"),
             away_points=_g(g, "awayPoints"),
-        ))
+        )
+        if completed:
+            # Real result now known — a pre-game AI prediction has served its
+            # purpose and would otherwise sit stale next to the final score
+            # forever, since nothing else ever clears it.
+            values.update(predicted_winner=None, predicted_confidence=None, prediction_analysis=None)
+        await _upsert(db, Game, {"cfbd_id": cfbd_id}, values)
         count += 1
     await db.commit()
     logger.info("Ingested %d games for %d", count, year)

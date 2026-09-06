@@ -128,6 +128,36 @@ async def _predict_game_isolated(game_id: int, force: bool) -> dict | None:
         return await predict_game(session, game_id, force=force)
 
 
+async def refresh_stale_predictions(db: AsyncSession, season: int | None = None) -> int:
+    """Force-regenerate every cached prediction for a game that hasn't been
+    played yet. A prediction is only ever generated on request and then
+    cached forever (see predict_game's `if game.predicted_winner and not
+    force: return` guard) — as real results come in and team form/records
+    change, those still-pending predictions go stale unless something
+    explicitly re-predicts them. Games with no cached prediction at all are
+    left alone (nothing to refresh; the next on-demand predict click will
+    already see current data). Runs concurrently, same reasoning as
+    predict_team_season: sequential would be N x ~15s."""
+    if season is None:
+        season = await _resolve_season(db)
+        if season is None:
+            return 0
+
+    result = await db.execute(
+        select(Game.id).where(
+            Game.season == season,
+            Game.completed.is_(False),
+            Game.predicted_winner.is_not(None),
+        )
+    )
+    game_ids = [gid for (gid,) in result.all()]
+    if not game_ids:
+        return 0
+
+    await asyncio.gather(*[_predict_game_isolated(gid, force=True) for gid in game_ids])
+    return len(game_ids)
+
+
 async def predict_team_season(db: AsyncSession, school: str, force: bool = False) -> dict | None:
     """Full-season projection for one team: real results for completed games,
     AI predictions (generated + cached per-game via predict_game) for the rest.
