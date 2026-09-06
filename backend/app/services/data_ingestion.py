@@ -25,9 +25,14 @@ async def _upsert(db: AsyncSession, model, match: dict, values: dict):
     """Update the row matching `match` in place if one exists, else insert a
     new one — every ingest function below is safe to re-run (a real sync,
     not just a one-time seed) because of this. Without it, re-running against
-    an already-populated table would duplicate every row."""
-    result = await db.execute(select(model).filter_by(**match))
-    row = result.scalar_one_or_none()
+    an already-populated table would duplicate every row.
+
+    Matches on the first row found rather than requiring exactly one: the
+    original insert-only ingestion already left some real duplicate rows
+    behind (same natural key inserted more than once before this upsert
+    logic existed), and this needs to update one of them, not crash."""
+    result = await db.execute(select(model).filter_by(**match).limit(1))
+    row = result.scalars().first()
     if row:
         for k, v in values.items():
             setattr(row, k, v)
